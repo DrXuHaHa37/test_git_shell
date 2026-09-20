@@ -1,0 +1,98 @@
+{
+  "version": 2,
+  "recording": {
+    "key": "rec:v1|record_v4l2_2026-09-09_14-28-04_0.mcap|942172915|1788935288492438932|1788935305595223548|10.e8jf4y",
+    "file_name": "record_v4l2_2026-09-09_14-28-04_0.mcap",
+    "source_kind": "file",
+    "size_bytes": 942172915,
+    "start": {
+      "sec": 1788935288,
+      "nsec": 492438932
+    },
+    "end": {
+      "sec": 1788935305,
+      "nsec": 595223548
+    },
+    "topics": [
+      "/camera/camera/aligned_depth_to_color/image_raw",
+      "/camera/camera/color/image_raw",
+      "/quad_tile/compressed",
+      "/recording/apexhand/left/joint_states",
+      "/recording/apexhand/right/joint_states",
+      "/rysen/apexhand/ip_192_168_0_102/move_j_position_follow_command",
+      "/rysen/apexhand/ip_192_168_0_103/move_j_position_follow_command",
+      "/teleoperation/joint_command",
+      "/tianji/joint_states",
+      "/v4l2_quad/status"
+    ]
+  },
+  "markedComplete": true,
+  "exportedAt": "2026-09-10T07:51:08.553Z",
+  "annotations": [
+    {
+      "id": "ann-mtv86ggb-2h28uym",
+      "start": {
+        "sec": 1788935288,
+        "nsec": 492438932
+      },
+      "end": {
+        "sec": 1788935292,
+        "nsec": 90938932
+      },
+      "label": "pick up cylinder",
+      "created_at": "2026-09-10T07:48:07.499Z"
+    },
+    {
+      "id": "ann-mtv86rku-pzv3iyh",
+      "start": {
+        "sec": 1788935292,
+        "nsec": 90938932
+      },
+      "end": {
+        "sec": 1788935294,
+        "nsec": 589938932
+      },
+      "label": "handover up cylinder",
+      "created_at": "2026-09-10T07:48:21.918Z"
+    },
+    {
+      "id": "ann-mtv87plu-ykvgpy1",
+      "start": {
+        "sec": 1788935294,
+        "nsec": 592795228
+      },
+      "end": {
+        "sec": 1788935298,
+        "nsec": 727295228
+      },
+      "label": "insert cylinderin to box",
+      "created_at": "2026-09-10T07:49:06.018Z"
+    },
+    {
+      "id": "ann-mtv88mh9-rt7bzqm",
+      "start": {
+        "sec": 1788935298,
+        "nsec": 732322715
+      },
+      "end": {
+        "sec": 1788935302,
+        "nsec": 974322715
+      },
+      "label": "close box",
+      "created_at": "2026-09-10T07:49:48.621Z"
+    },
+    {
+      "id": "ann-mtv89vyc-wa3xh57",
+      "start": {
+        "sec": 1788935302,
+        "nsec": 997544356
+      },
+      "end": {
+        "sec": 1788935305,
+        "nsec": 533044356
+      },
+      "label": "scrapped",
+      "created_at": "2026-09-10T07:50:47.556Z"
+    }
+  ]
+}

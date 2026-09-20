@@ -1,0 +1,25 @@
+v4l2_quad:
+  ros__parameters:
+    # 顺序：左上头左、右上头右、左下腕左、右下腕右。
+    # 使用 sysfs 设备名称匹配，不依赖 USB 插拔会改变的 /dev/videoN。
+    camera_names: [head_left, head_right, wrist_left, wrist_right]
+    device_names:
+      - "vi-output, shw5g 12-001d"
+      - "vi-output, shw5g 9-001b"
+      - "vi-output, shw5g 12-001b"
+      - "vi-output, shw5g 12-001c"
+    exposures_us: [5000, 5000, 5000, 5000]
+    gains_x100: [100, 100, 100, 100]
+    tile_width: 640
+    tile_height: 496
+    fps: 30
+    jpeg_quality: 100
+    flip_180: true
+    # 本机 Raw: (10位像素 << 6) | (10位像素 >> 4)。不是低10位。
+    raw_shift: 6
+    black_level: 8.0
+    gamma: 2.2
+    # 固定的初始白平衡，不是厂商 ISP 标定；可按灰卡调整 B/G/R 三通道。
+    white_balance_bgr: [2.4, 1.0, 1.6]
+    max_skew_ms: 50.0
+    topic: /quad_tile/compressed
