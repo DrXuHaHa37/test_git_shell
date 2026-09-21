@@ -1,0 +1,28 @@
+[project]
+name = "rysen-pre-processing"
+version = "0.1.0"
+description = "MCAP 预处理脚本运行环境"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.uv]
+package = false
+default-groups = ["mcap"]
+
+# src 布局：导入根是 src
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[dependency-groups]
+mcap = [
+    "mcap>=1.2.0",
+    "mcap-ros2-support>=0.5.0",  # import name: mcap_ros2
+    "pillow>=10.0.0",  # import name: PIL
+    "numpy>=1.24.0",   # mcap_precheck：向量化统计
+    "pyyaml>=6.0.0",   # mcap_precheck：配置加载
+]
+# mcap_precheck 的③相机类解码（h264/h265）才需要；默认不装
+camera = [
+    "av>=13.0.0",
+]
