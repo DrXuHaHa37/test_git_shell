@@ -1,0 +1,348 @@
+# MCAP 前置检测配置
+#
+# 用法：
+#   python -m mcap_precheck inspect data/rec.mcap --profile strict
+#
+# 说明：
+#   1. 所有领域知识（topic 名、关节名、限位、字段路径）都在这里，核心库不内置任何业务假设。
+#   2. 六个类别通过 categories.X.enabled 独立启停。
+#   3. YAML 的 `<<: *default` 是**浅合并**：覆盖某个段落时必须把该段落写完整
+#      （例如 strict 里 categories 要写全 6 项，否则未列出的类别会被整体丢掉）。
+
+version: 1
+
+profiles:
+  default: &default
+    # ---------- 类别总开关（每类均可独立启停）----------
+    categories:
+      global:    {enabled: true}
+      topic:     {enabled: true}
+      camera:    {enabled: true}      # 需解码，默认关
+      numeric:   {enabled: true}
+      joint:     {enabled: true}      # 已配 ApexHand 手 + Tianji 臂限位
+      cmd_state: {enabled: true}      # 需配置配对
+
+    # ---------- 0 完整性（恒启用）----------
+    # 输入键放段落根，判定线放 thresholds（与 global_metrics 一致）：
+    #   · required_topics —— 输入：必须存在的 topic 列表
+    #   · require_summary —— 输入：是否要求 summary；未显式配 summary_present 时用它的
+    #                        值决定该指标的 severity（true → error / false → warn）
+    #   · thresholds      —— 5 项完整性指标的判定线，缺省值即下列值（config.INTEGRITY_DEFAULT_THRESHOLDS）
+    # ⚠ 把这 5 项降为 warn 意味着：完整性不再短路（fail_fast 不触发），带病数据会继续跑 ①~⑥。
+    integrity:
+      required_topics: []
+      require_summary: true
+      thresholds:
+        readable:        {equals: 1, severity: error}
+        not_truncated:   {equals: 1, severity: error}
+        message_count:   {min: 1,    severity: error}
+        missing_topics_count: {max: 0,    severity: error}
+        # summary_present 的 severity 跟随 require_summary（true → error→30 / false → warn→10），
+        # 否则 require_summary: false 就失去意义。要显式固定 severity 时取消下面注释（会覆盖上面那条规则）：
+        # summary_present: {equals: 1, severity: error}
+
+    # ---------- 时间源 ----------
+    time_source:
+      default: log_time
+      per_category:
+        camera: header_stamp
+        joint:  log_time
+      per_topic: {}
+
+    # ---------- ① 全局 ----------
+    # 数值来源：convert 脚本 argparse 默认值
+    global_metrics:
+      expected_rate_hz: 30.0
+      drop_detect: {mode: interval, factor: 1.5}
+      thresholds:
+        duration_s:                {min: 5.0,   severity: error}
+        timestamp_rollback_count:  {max: 0,     severity: error}
+        timestamp_rollback_max_ns: {max: 0,     severity: error}
+        max_frame_interval_ms:     {max: 300.0, severity: error}   # ← --repair-gap-ms
+        dropped_frame_count:       {max: 0,     severity: error}
+        message_count:             {min: 20,    severity: error}   # ← --min-episode-frames
+
+    # ---------- ② Topic ----------
+    # thresholds（指标阈值）→ groups.<name> → 条目 thresholds，
+    # 解析顺序固定为 段落 → group（按条目的 group）→ 条目，按指标逐项覆盖。
+    topic_metrics:
+      catch_all: true
+      # 单 topic 内是否检查 publish_time 回退（默认关，多设备未同步时会有假阳性）
+      check_stamp_rollback: false
+      thresholds:
+        rate_hz:         {min: 25, max: 35, severity: error}
+        max_interval_ms: {max: 300.0, severity: error}   # ← 与 repair-gap 一致
+        message_count:   {min: 20,   severity: error}
+      # 按数据类别细分（数值来自 convert 脚本）
+      groups:
+        head_camera:  {thresholds: {max_interval_ms: {max: 50.0, severity: error}}}   # ← --max-head-age-ms
+        wrist_camera: {thresholds: {max_interval_ms: {max: 70.0, severity: error}}}   # ← --max-wrist-age-ms
+        robot_state:  {thresholds: {max_interval_ms: {max: 30.0, severity: error}}}   # ← --max-state-age-ms
+        command:      {thresholds: {max_interval_ms: {max: 50.0, severity: error}}}   # ← --max-command-age-ms
+      # 逐 topic：group 归类 + thresholds 覆盖（只写要改的指标，其余沿用上层）
+      topics: &topic_overrides
+        "/tianji/joint_states":                   {group: robot_state, thresholds: {rate_hz: {min: 90, max: 110, severity: error}}}
+        "/teleoperation/joint_command":           {group: command,     thresholds: {rate_hz: {min: 90, max: 110, severity: error}}}
+        "/recording/apexhand/left/joint_states":  {group: robot_state, thresholds: {rate_hz: {min: 90, max: 110, severity: error}}}
+        "/recording/apexhand/right/joint_states": {group: robot_state, thresholds: {rate_hz: {min: 90, max: 110, severity: error}}}
+        "/rysen/apexhand/ip_192_168_0_102/move_j_position_follow_command":
+          {group: command, thresholds: {rate_hz: {min: 55, max: 80, severity: warn}}}
+        "/rysen/apexhand/ip_192_168_0_103/move_j_position_follow_command":
+          {group: command, thresholds: {rate_hz: {min: 55, max: 80, severity: warn}}}
+        "/quad_tile/compressed":                           {group: wrist_camera}
+        "/camera/camera/color/image_raw":                  {group: head_camera}
+        "/camera/camera/aligned_depth_to_color/image_raw": {group: head_camera}
+
+    # ---------- ③ 相机 ----------
+    camera_metrics:
+      topics: ["/quad_tile/compressed", "/camera/camera/color/image_raw"]
+      backend: av            # av | opencv（opencv 仅加速灰度/resize/拉普拉斯）
+      max_frames: null       # 限制解码帧数（null=全解）
+      sample_ratio: 1.0      # 抽样比例，0.1=每 10 帧取 1
+      blur:      {resize_to: [224, 224], min_laplacian_var: 100.0}
+      black:     {max_mean_luma: 10.0, max_std_luma: 5.0}
+      duplicate: {method: pixel_diff, pixel_diff_eps: 1.0}
+      stutter:   {interval_factor: 2.0}
+      groups:
+        # common: {thresholds: {stutter_count: {max: 5, severity: error}, black_ratio: {max: 0, severity: error}, duplicate_ratio: {max: 0.06, severity: error}}}
+      thresholds:
+        skew_p95_ms:            {max: 50.0,  severity: error}   # ← --max-camera-skew-ms
+        skew_max_ms:            {max: 100.0, severity: warn}
+        stutter_count:          {max: 5,     severity: error}
+        duplicate_ratio:        {max: 0.02,  severity: error}
+        black_ratio:            {max: 0.01,  severity: error}
+        blur_ratio:             {max: 0.05,  severity: warn}
+        decode_failure_count:   {max: 0,     severity: error}
+        log_minus_header_p95_ms:   {min: -100.0, max: 100.0, severity: warn}
+        log_minus_header_drift_ms: {max: 50.0, severity: warn}
+      topics: ["/quad_tile/compressed", "/camera/camera/color/image_raw"]
+      # topics:
+        # "/camera/camera/color/image_raw": {group: common}
+
+    # ---------- ④ 非法数值 ----------
+    numeric:
+      scan_fields: []        # 留空 = 扫描所有数值字段
+      nan_inf_count: {max: 0, severity: error}
+
+    # ---------- ⑤ 关节（ApexHand 灵巧手 + Tianji 机械臂）----------
+    # 手与臂同属 `joint` 一类，放在同一段里各自成组；joint_metrics 的 _joint_spec() 按
+    # topic 生效的规格解析，故 21 维手部与 14 维臂部的 index 0 不再互相覆盖，无需再拆 profile。
+    #
+    # 结构：
+    #   · joint.topics[*].group 引用 joint.groups.<name>——左右手/左右臂限位一致，各共用一份；
+    #   · 逐关节限位、兜底与阈值都写在 group 内；阈值按指标覆盖段落级兜底。
+    # 单位：位置 rad，速度 rad/s。
+    joint_metrics:
+      topics:
+        - {name: "/recording/apexhand/left/joint_states",  position_field: position, velocity_field: velocity, group: apexhand}
+        - {name: "/recording/apexhand/right/joint_states", position_field: position, velocity_field: velocity, group: apexhand}
+        - {name: "/tianji/joint_states",                   position_field: position, velocity_field: velocity, group: tianji_arm}
+      # 段落级兜底阈值：越界计数手/臂共用；速度阈值由各 group 覆盖。
+      #
+      # ⚠ defaults 与 thresholds 的分工（两类 key 不得重叠）：
+      #   · defaults       —— 非阈值的类别参数：位置限位 lower/upper、
+      #                      结构限速 velocity_limit（URDF/MJCF 的物理上限，不是判定线）
+      #   · thresholds     —— 指标阈值，key 只能是指标名（out_of_range_count /
+      #                      max_velocity / velocity_p95）
+      #   · velocity_limit 非空时，会覆盖 max_velocity 指标的 max（逐关节优先）
+      thresholds:
+        out_of_range_count: {max: 0, severity: error}
+      groups:
+        # 左右手限位完全一致，均为 21 DOF，故共用本组。
+        # 结构限速 8.7266 rad/s = 500 °/s（URDF 全关节统一值）。
+        apexhand:
+          # 兜底限位；下列 joints 未覆盖的 index 用此值（正常情况 0~20 已全量列出）
+          defaults: {lower: -3.14, upper: 3.14, velocity_limit: 8.7266}
+          thresholds:
+            max_velocity: {max: 8.7266, severity: warn}    # 结构上限；单点跳变会触发，仅告警
+            velocity_p95: {max: 3.0,    severity: error}   # 实测峰值 0.98，约 3 倍余量
+          joints:
+            # —— 拇指 5 DOF ——
+            - {index: 0,  name: thumb_j0,  lower:  0.0,     upper: 1.3963}
+            - {index: 1,  name: thumb_j1,  lower: -0.1745,  upper: 1.047}
+            - {index: 2,  name: thumb_j2,  lower:  0.0,     upper: 1.396}
+            - {index: 3,  name: thumb_j3,  lower: -0.349,   upper: 1.396}
+            - {index: 4,  name: thumb_j4,  lower: -0.349,   upper: 1.396}
+            # —— 食指 4 DOF ——
+            - {index: 5,  name: index_j0,  lower: -0.436,   upper: 0.436}
+            - {index: 6,  name: index_j1,  lower: -0.349,   upper: 1.5708}
+            - {index: 7,  name: index_j2,  lower: -0.0873,  upper: 1.745}
+            - {index: 8,  name: index_j3,  lower: -0.0873,  upper: 1.745}
+            # —— 中指 4 DOF ——
+            - {index: 9,  name: middle_j0, lower: -0.436,   upper: 0.436}
+            - {index: 10, name: middle_j1, lower: -0.349,   upper: 1.5708}
+            - {index: 11, name: middle_j2, lower: -0.0873,  upper: 1.745}
+            - {index: 12, name: middle_j3, lower: -0.0873,  upper: 1.745}
+            # —— 无名指 4 DOF ——
+            - {index: 13, name: ring_j0,   lower: -0.436,   upper: 0.436}
+            - {index: 14, name: ring_j1,   lower: -0.349,   upper: 1.5708}
+            - {index: 15, name: ring_j2,   lower: -0.0873,  upper: 1.745}
+            - {index: 16, name: ring_j3,   lower: -0.0873,  upper: 1.745}
+            # —— 小指 4 DOF ——
+            - {index: 17, name: pinky_j0,  lower: -0.436,   upper: 0.436}
+            - {index: 18, name: pinky_j1,  lower: -0.349,   upper: 1.5708}
+            - {index: 19, name: pinky_j2,  lower: -0.0873,  upper: 1.745}
+            - {index: 20, name: pinky_j3,  lower: -0.0873,  upper: 1.745}
+          # 阈值：结构上限（URDF）与实测标定（4 批录制、每手 7264 样本）并列，详见
+          # docs/joint-constraints.md §5。
+          #     → max 噪声敏感，仅作 warn；以 p95 作为 error 主判据，取 3.0（约 3 倍余量）
+
+
+        # 左右臂结构限位一致，共用本组。
+        # 限位来源：teleoperation/teleoperation_arm/output/tianji/models/tianji/
+        #          left/marvin_L.xml、right/marvin_R.xml（左右臂完全一致）
+        # 速度限制：厂商未在仓库给出绝对值——MJCF 无速度限，SDK 只暴露百分比接口
+        #          SetJointMode(arm, velRatio 0~100, accRatio 0~100)，实际限值由下位机提供。
+        #          故臂无结构限速（velocity_limit: null），下列 max_velocity /
+        #          velocity_p95 均为实测经验值，需用实机数据标定。
+        tianji_arm:
+          defaults: {lower: -3.1067, upper: 3.1067, velocity_limit: null}
+          # 阈值：结构上限（MJCF）与实测标定（4 批录制、7319 样本）并列，详见
+          # docs/joint-constraints.md §5.3。
+          #     与手部不同，臂部速度分布干净（max ≈ p99.9），无跳变尖峰。
+          # 速度项均为实测经验值，非结构上限；取约 2.4 倍余量。
+          thresholds:
+            max_velocity: {max: 3.0, severity: warn}    # 实测峰值 1.2444，约 2.4 倍余量
+            velocity_p95: {max: 2.0, severity: error}   # 实测峰值 0.8239，约 2.4 倍余量
+          # 顺序与消息 name 字段一致：Joint1_L..Joint7_L(0-6)、Joint1_R..Joint7_R(7-13)
+          joints:
+            # 左臂
+            - {index: 0,  name: Joint1_L, lower: -3.1067, upper:  3.1067}   # ±178°
+            - {index: 1,  name: Joint2_L, lower: -2.0944, upper:  2.0944}   # ±120°
+            - {index: 2,  name: Joint3_L, lower: -3.1067, upper:  3.1067}   # ±178°
+            - {index: 3,  name: Joint4_L, lower: -2.5307, upper: -0.1745}   # 单侧：-145°~-10°，不含 0
+            - {index: 4,  name: Joint5_L, lower: -3.1067, upper:  3.1067}   # ±178°
+            - {index: 5,  name: Joint6_L, lower: -1.0472, upper:  1.0472}   # ±60°
+            - {index: 6,  name: Joint7_L, lower: -1.5708, upper:  1.5708}   # ±90°
+            # 右臂（限位与左臂相同）
+            - {index: 7,  name: Joint1_R, lower: -3.1067, upper:  3.1067}
+            - {index: 8,  name: Joint2_R, lower: -2.0944, upper:  2.0944}
+            - {index: 9,  name: Joint3_R, lower: -3.1067, upper:  3.1067}
+            - {index: 10, name: Joint4_R, lower: -2.5307, upper: -0.1745}
+            - {index: 11, name: Joint5_R, lower: -3.1067, upper:  3.1067}
+            - {index: 12, name: Joint6_R, lower: -1.0472, upper:  1.0472}
+            - {index: 13, name: Joint7_R, lower: -1.5708, upper:  1.5708}
+
+
+    # ---------- ⑥ 命令-状态 ----------
+    cmd_state_metrics:
+      # pairs 是「映射列表」，不是元组/序列：每项分别描述 command、state 两侧的 topic 与字段。
+      # 两侧 topic 均为 sensor_msgs/JointState，位置字段都是 position。
+      #
+      # 阈值必须逐 pair 给：臂与手的跟随特性不是一个量级（臂 p95 ~0.017 rad，
+      # 手 p95 0.08~0.37 rad），共用一套只会让手恒被拒、或把臂的阈值放废。
+      # 下列数值均为「单批实测（record_v4l2_2026-09-09_14-28-04）× 约 3 倍余量」，
+      # 手的阈值标 warn，待跨多批标定后再定 error 值。
+      pairs:
+        - name: tianji_arm
+          command: {topic: "/teleoperation/joint_command", field: position}
+          state:   {topic: "/tianji/joint_states", field: position}
+          match: nearest            # nearest | exact（exact 要求时间戳完全相等）
+          max_time_delta_ms: 50.0   # 最近邻时差超过此值记为未匹配
+          thresholds:
+            first_command_minus_state_p95_abs: {max: 0.05, severity: error}
+            first_command_minus_state_max_abs: {max: 0.2,  severity: error}
+            adjacent_command_change_max_abs:   {max: 0.5,  severity: warn}
+            unmatched_ratio:                   {max: 0.01, severity: warn}
+        - name: apexhand_left
+          command: {topic: "/rysen/apexhand/ip_192_168_0_102/move_j_position_follow_command", field: position}
+          state:   {topic: "/recording/apexhand/left/joint_states", field: position}
+          match: nearest
+          max_time_delta_ms: 50.0
+          # 偏差集中在 thumb_j2（命令 0.349~1.081 超出实测可达 0.352~0.749）
+          # 与 pinky_j2/3（实测反超命令）；属手部跟随/反馈问题，非匹配错误
+          thresholds:
+            first_command_minus_state_p95_abs: {max: 0.25, severity: warn}
+            first_command_minus_state_max_abs: {max: 1.5,  severity: warn}
+            adjacent_command_change_max_abs:   {max: 0.5,  severity: warn}
+            unmatched_ratio:                   {max: 0.01, severity: warn}
+        - name: apexhand_right
+          command: {topic: "/rysen/apexhand/ip_192_168_0_103/move_j_position_follow_command", field: position}
+          state:   {topic: "/recording/apexhand/right/joint_states", field: position}
+          match: nearest
+          max_time_delta_ms: 50.0
+          # ring_j2/3、pinky_j2/3 实测摆幅远大于命令跨度（自相关 -0.39 / 0.38），
+          # 与 joint-constraints.md §5.2 记录的右手编码器噪声嫌疑关节一致
+          thresholds:
+            first_command_minus_state_p95_abs: {max: 1.0, severity: warn}
+            first_command_minus_state_max_abs: {max: 2.5, severity: warn}
+            adjacent_command_change_max_abs:   {max: 0.5, severity: warn}
+            unmatched_ratio:                   {max: 0.01, severity: warn}
+      # 段落级兜底：pair 未列某项时沿用
+      thresholds:
+        first_command_minus_state_p95_abs: {max: 0.05, severity: error}
+        first_command_minus_state_max_abs: {max: 0.2,  severity: error}
+        adjacent_command_change_max_abs:   {max: 0.5,  severity: warn}
+        unmatched_ratio:                   {max: 0.01, severity: warn}
+
+    # ---------- 判定 ----------
+    fail_fast: true          # 结构类失败即短路，不继续算指标
+    fail_on_warning: false   # true 时 warn 也拒绝
+
+    # ---------- 日志 ----------
+    logging:
+      level: INFO
+      dir: logs/mcap_precheck
+      jsonl: true
+      console: true
+      rotation: {by: size, max_bytes: 52428800, backup_count: 10}
+      summary_file: summary.jsonl
+      warn_ratio: 0.8
+      redact_paths: false
+
+  # ---- 严格：入库前终检（浅合并：categories 必须写全）----
+  strict:
+    <<: *default
+    categories:
+      global:    {enabled: true}
+      topic:     {enabled: false}
+      camera:    {enabled: true}
+      numeric:   {enabled: true}
+      joint:     {enabled: true}
+      cmd_state: {enabled: true}
+    topic_metrics:
+      catch_all: true
+      check_stamp_rollback: true
+      thresholds:
+        rate_hz:         {min: 28, max: 32, severity: error}
+        max_interval_ms: {max: 70.0, severity: error}
+        message_count:   {min: 20,   severity: error}
+      groups:
+        head_camera:  {thresholds: {max_interval_ms: {max: 50.0, severity: error}}}
+        wrist_camera: {thresholds: {max_interval_ms: {max: 70.0, severity: error}}}
+        robot_state:  {thresholds: {max_interval_ms: {max: 30.0, severity: error}}}
+        command:      {thresholds: {max_interval_ms: {max: 50.0, severity: error}}}
+      # 复用 default 的逐 topic 覆盖（YAML 浅合并：不引用会被 strict 的空 topics 顶掉）
+      topics: *topic_overrides
+    global_metrics:
+      expected_rate_hz: 30.0
+      drop_detect: {mode: interval, factor: 1.5}
+      thresholds:
+        duration_s:                {min: 10.0, severity: error}
+        timestamp_rollback_count:  {max: 0,     severity: error}
+        timestamp_rollback_max_ns: {max: 0,     severity: error}
+        # 硬上限必须 >= 下面逐类别的软阈值（wrist 70ms），否则配置自洽校验报错
+        max_frame_interval_ms:     {max: 70.0,  severity: error}
+        dropped_frame_count:       {max: 0,     severity: error}
+        message_count:             {min: 20,    severity: error}
+
+  # ---- 冒烟：采集现场快速初筛（只跑便宜的）----
+  smoke:
+    <<: *default
+    categories:
+      global:    {enabled: true}
+      topic:     {enabled: false}
+      camera:    {enabled: false}
+      numeric:   {enabled: true}
+      joint:     {enabled: false}
+      cmd_state: {enabled: false}
+    global_metrics:
+      expected_rate_hz: 30.0
+      drop_detect: {mode: expected_count, factor: 1.5}
+      thresholds:
+        duration_s:                {min: 1.0,    severity: warn}
+        timestamp_rollback_count:  {max: 5,      severity: warn}
+        timestamp_rollback_max_ns: {max: 0,      severity: warn}
+        max_frame_interval_ms:     {max: 1000.0, severity: warn}
+        dropped_frame_count:       {max: 0,      severity: warn}
+        message_count:             {min: 1,      severity: warn}
